@@ -8,6 +8,18 @@ cap = cv2.VideoCapture(video_path)
 
 landmarks, world_landmarks, valid_frames, fps = get_video_data(video_path, model_path)
 
+
+"""
+TO TRACK PER SIDE:
+1. overstriding @ initial contact (shin angle)
+2. thigh inclination @ initial contact
+3. knee flexion @ initial contact
+4. vertical oscillation
+5. cadence
+6. knee flexion during swing 
+7. hip extension at toe-off 
+"""
+
 #TODO: add detection for which way the user is facing; angles should be computed relative to that. 
 
 def compute_cadence(left_contacts, right_contacts, fps, total_frames):
@@ -16,94 +28,71 @@ def compute_cadence(left_contacts, right_contacts, fps, total_frames):
     total_time = total_frames / fps / 60 # seconds / frame * frames * 1 min / 60 s = min
     return total_contacts / total_time; 
     
-
-def compute_knee_flexion_at_contact(right_contacts, left_contacts, visibility_threshold, landmarks):
-    "Computes angles between hip, knee and ankle at each initial contact."
-    left_angles = []
-    right_angles = []
+def compute_angles(right_contacts, left_contacts, visibility_threshold, landmarks, world_landmarks):
+    angles = {
+        'knee_flexion': {'left': [], 'right': []},
+        'tibial_inclination': {'left': [], 'right': []},
+        'thigh_angle': {'left': [], 'right': []},
+    }
+    
     for i in range(len(left_contacts)):
-        hip = world_landmarks[left_contacts[i], 23] 
-        knee = world_landmarks[left_contacts[i], 25]
-        ankle = world_landmarks[left_contacts[i], 27]
-        #only compute angle if all 3 landmarks are visible. 
-        if (hip[3] >= visibility_threshold and knee[3] >= visibility_threshold and ankle[3] >= visibility_threshold):
-            knee_ankle = knee[:3] - ankle[:3]
-            knee_hip = knee[:3] - hip[:3]
-            angle = np.dot(knee_ankle, knee_hip)/np.linalg.norm(knee_ankle)/np.linalg.norm(knee_hip)
-            angle = np.arccos(angle)
-            left_angles.append(angle)
-    
-    for i in range(len(right_contacts)):
-        hip = world_landmarks[right_contacts[i], 24] 
-        knee = world_landmarks[right_contacts[i], 26]
-        ankle = world_landmarks[right_contacts[i], 28]
-        #only compute angle if all 3 landmarks are visible. 
-        if (hip[3] >= visibility_threshold and knee[3] >= visibility_threshold and ankle[3] >= visibility_threshold):
-            knee_ankle = knee[:3] - ankle[:3]
-            knee_hip = knee[:3] - hip[:3]
-            angle = np.dot(knee_ankle, knee_hip)/np.linalg.norm(knee_ankle)/np.linalg.norm(knee_hip)
-            angle = np.clip(angle, -1.0, 1.0);
-            angle = np.degrees(np.arccos(angle))
-            right_angles.append(angle)
-    
-    return left_angles, right_angles
-    
+        world_hip = world_landmarks[left_contacts[i], 23] 
+        world_knee = world_landmarks[left_contacts[i], 25]
+        world_ankle = world_landmarks[left_contacts[i], 27]
 
-def compute_tibial_and_hip_flexion_at_contact(right_contacts, left_contacts, visibility_threshold, landmarks):
-    """Return tibial and hip flexion angles at initial contacts. 
-    i.e., angles between the shin and the vertical and the thigh and the vertical."""
-
-    right_tibial_flexion = []
-    left_tibial_flexion = []
-    right_hip_flexion = []
-    left_hip_flexion = []
-
-    for i in range(len(left_contacts)):
         hip = landmarks[left_contacts[i], 23]
         knee = landmarks[left_contacts[i], 25]
         ankle = landmarks[left_contacts[i], 27]
-        if (knee[3] >= visibility_threshold and ankle[3] >= visibility_threshold):
-            dx = ankle[0] - knee[0]
-            dy = ankle[1] - knee[1]
-            if(dy == 0):
-                angle = 90
-            else:
-                angle = np.degrees(np.arctan(dx/dy))
-            left_tibial_flexion.append(angle)
 
+        if (world_hip[3] >= visibility_threshold and world_knee[3] >= visibility_threshold and world_ankle[3] >= visibility_threshold):
+            angles['knee_flexion']['left'].append(compute_knee_flexion(world_hip, world_knee, world_ankle))
+        if (knee[3] >= visibility_threshold and ankle[3] >= visibility_threshold):
+            angles['tibial_inclination']['left'].append(compute_tibial_flexion(knee, ankle))
         if (hip[3] >= visibility_threshold and knee[3] >= visibility_threshold):
-            dx = knee[0] - hip[0]
-            dy = knee[1] - hip[1]
-            if(dy == 0):
-                angle = 90
-            else:
-                angle = np.degrees(np.arctan(dx/dy))
-            left_hip_flexion.append(angle)
-            
+            angles['thigh_angle']['left'].append(compute_thigh_angle(hip, knee))
 
     for i in range(len(right_contacts)):
+        world_hip = world_landmarks[right_contacts[i], 24] 
+        world_knee = world_landmarks[right_contacts[i], 26]
+        world_ankle = world_landmarks[right_contacts[i], 28]
+
         hip = landmarks[right_contacts[i], 24]
         knee = landmarks[right_contacts[i], 26]
         ankle = landmarks[right_contacts[i], 28]
-        if (knee[3] >= visibility_threshold and ankle[3] >= visibility_threshold):
-            dx = ankle[0] - knee[0]
-            dy = ankle[1] - knee[1]
-            if(dy == 0):
-                angle = 90
-            else:
-                angle = np.degrees(np.arctan(dx/dy))
-            right_tibial_flexion.append(angle)
-        if (hip[3] >= visibility_threshold and knee[3] >= visibility_threshold):
-            dx = knee[0] - hip[0]
-            dy = knee[1] - hip[1]
-            if(dy == 0):
-                angle = 90
-            else:
-                angle = np.degrees(np.arctan(dx/dy))
-            right_hip_flexion.append(angle)
-    
-    return right_tibial_flexion, left_tibial_flexion, right_hip_flexion, left_hip_flexion
 
+        if (world_hip[3] >= visibility_threshold and world_knee[3] >= visibility_threshold and world_ankle[3] >= visibility_threshold):
+            angles['knee_flexion']['right'].append(compute_knee_flexion(world_hip, world_knee, world_ankle))
+        if (knee[3] >= visibility_threshold and ankle[3] >= visibility_threshold):
+            angles['tibial_inclination']['right'].append(compute_tibial_flexion(knee, ankle))
+        if (hip[3] >= visibility_threshold and knee[3] >= visibility_threshold):
+            angles['thigh_angle']['right'].append(compute_thigh_angle(hip, knee))
+
+    return angles
+
+
+    
+
+def compute_knee_flexion(world_hip, world_knee, world_ankle):
+    "Computes angles between hip, knee and ankle at each initial contact."
+    knee_ankle = world_knee[:3] - world_ankle[:3]
+    knee_hip = world_knee[:3] - world_hip[:3]
+    angle = np.dot(knee_ankle, knee_hip)/np.linalg.norm(knee_ankle)/np.linalg.norm(knee_hip)
+    angle = np.clip(angle, -1.0, 1.0);
+    angle = np.degrees(np.arccos(angle))
+    return angle
+    
+def compute_tibial_flexion(knee, ankle):
+    """Return angle between shin and vertical at initial contact."""
+    dx = ankle[0] - knee[0]
+    dy = ankle[1] - knee[1]
+    return np.degrees(np.arctan2(dx, dy))
+
+def compute_thigh_angle(hip, knee):
+    """Return angle formed by thigh and vertical at initial contact."""
+    dx = knee[0] - hip[0]
+    dy = knee[1] - hip[1]
+    angle = np.degrees(np.arctan2(dx, dy))
+    return angle
 
 
 def detect_initial_contacts(landmarks, fps, foot='left'):
@@ -138,7 +127,6 @@ def detect_initial_contacts(landmarks, fps, foot='left'):
         contacts = filtered
 
     return np.array(contacts)
-
 
 def validate_contacts(left_contacts, right_contacts):
     """Check that left and right contacts roughly alternate."""
