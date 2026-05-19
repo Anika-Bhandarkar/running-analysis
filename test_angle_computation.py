@@ -18,16 +18,7 @@ Run with: pytest test_angle_computation.py -v
 
 import numpy as np
 import pytest
-from angle_computation import (
-    compute_knee_flexion,
-    compute_tibial_flexion,
-    compute_thigh_angle,
-    compute_cadence,
-    compute_angles,
-    detect_initial_contacts,
-    validate_contacts,
-    detect_mid_swing,
-)
+from angle_computation import *
 
 
 # ---------------------------------------------------------------------------
@@ -489,3 +480,120 @@ class TestComputeAngles:
         assert len(result['knee_flexion']['left']) == 0
         assert len(result['knee_flexion']['right']) == 0
         assert len(result['tibial_inclination']['left']) == 0
+
+
+class TestComputeVerticalOscillation:
+    """Tests for vertical oscillation (hip midpoint bounce amplitude).
+
+    Vertical oscillation measures how much the runner's center of mass
+    bounces vertically during each stride. It's computed as the difference
+    between local maxima and minima of the hip midpoint y-coordinate.
+    """
+
+    def test_sinusoidal_signal_detects_peaks_and_troughs(self):
+        """A clean sinusoidal hip trajectory should produce equal numbers
+        of maxima and minima (±1)."""
+        n_frames = 300
+        landmarks = make_empty_landmarks(n_frames)
+
+        t = np.arange(n_frames) / fps
+        hip_y = 0.45 + 0.03 * np.sin(2 * np.pi * 3.0 * t)
+
+        landmarks[:, 23, 1] = hip_y
+        landmarks[:, 24, 1] = hip_y
+
+        maxima, minima = compute_vertical_oscillation(landmarks, 0.5)
+
+        assert len(maxima) > 0
+        assert len(minima) > 0
+        assert abs(len(maxima) - len(minima)) <= 1
+
+    def test_oscillation_amplitude_is_correct(self):
+        """For a known sinusoidal signal with amplitude A, the difference
+        between mean maxima and mean minima should be approximately 2*A."""
+        n_frames = 300
+        landmarks = make_empty_landmarks(n_frames)
+
+        amplitude = 0.04
+        t = np.arange(n_frames) / fps
+        hip_y = 0.45 + amplitude * np.sin(2 * np.pi * 3.0 * t)
+
+        landmarks[:, 23, 1] = hip_y
+        landmarks[:, 24, 1] = hip_y
+
+        maxima, minima = compute_vertical_oscillation(landmarks, 0.5)
+
+        measured = np.mean(maxima) - np.mean(minima)
+        expected = 2 * amplitude
+        assert abs(measured - expected) < 0.005
+
+    def test_constant_signal_returns_empty(self):
+        """A flat hip trajectory (no bounce) should produce no maxima or minima."""
+        landmarks = make_empty_landmarks(100)
+        landmarks[:, 23, 1] = 0.45
+        landmarks[:, 24, 1] = 0.45
+
+        maxima, minima = compute_vertical_oscillation(landmarks, 0.5)
+
+        assert len(maxima) == 0
+        assert len(minima) == 0
+
+    def test_low_visibility_excluded(self):
+        """Frames where hip landmarks have low visibility should not
+        contribute peaks or troughs."""
+        n_frames = 300
+        landmarks = make_empty_landmarks(n_frames)
+
+        t = np.arange(n_frames) / fps
+        landmarks[:, 23, 1] = 0.45 + 0.03 * np.sin(2 * np.pi * 3.0 * t)
+        landmarks[:, 24, 1] = 0.45 + 0.03 * np.sin(2 * np.pi * 3.0 * t)
+
+        landmarks[:, 23, 3] = 0.0  # zero visibility
+        landmarks[:, 24, 3] = 0.0
+
+        maxima, minima = compute_vertical_oscillation(landmarks, 0.5)
+
+        assert len(maxima) == 0
+        assert len(minima) == 0
+
+    def test_midpoint_is_average_of_both_hips(self):
+        """Should use average of left and right hip y, not just one side.
+        This test will fail if the parentheses bug is present
+        (left + right/2 instead of (left + right)/2)."""
+        n_frames = 300
+        landmarks = make_empty_landmarks(n_frames)
+
+        t = np.arange(n_frames) / fps
+        amplitude = 0.03
+
+        # Left hip at 0.40, right at 0.50 — midpoint should be 0.45
+        landmarks[:, 23, 1] = 0.40 + amplitude * np.sin(2 * np.pi * 3.0 * t)
+        landmarks[:, 24, 1] = 0.50 + amplitude * np.sin(2 * np.pi * 3.0 * t)
+
+        maxima, minima = compute_vertical_oscillation(landmarks, 0.5)
+
+        # Midpoint maxima should be near 0.45 + 0.03 = 0.48
+        assert len(maxima) > 0
+        assert abs(np.mean(maxima) - 0.48) < 0.01
+
+    def test_higher_bounce_produces_larger_amplitude(self):
+        """A runner with more vertical bounce should produce a larger
+        difference between maxima and minima."""
+        n_frames = 300
+        t = np.arange(n_frames) / fps
+
+        low = make_empty_landmarks(n_frames)
+        low[:, 23, 1] = 0.45 + 0.02 * np.sin(2 * np.pi * 3.0 * t)
+        low[:, 24, 1] = low[:, 23, 1]
+
+        high = make_empty_landmarks(n_frames)
+        high[:, 23, 1] = 0.45 + 0.06 * np.sin(2 * np.pi * 3.0 * t)
+        high[:, 24, 1] = high[:, 23, 1]
+
+        low_max, low_min = compute_vertical_oscillation(low, 0.5)
+        high_max, high_min = compute_vertical_oscillation(high, 0.5)
+
+        low_amp = np.mean(low_max) - np.mean(low_min)
+        high_amp = np.mean(high_max) - np.mean(high_min)
+
+        assert high_amp > low_amp

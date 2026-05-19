@@ -5,11 +5,11 @@ import cv2
 DIRECTION_CONFIDENCE_THRESHOLD = 0.7
 VISIBILITY_THRESHOLD = 0.5
 
-model_path = 'pose_landmarker_heavy.task'
-video_path = 'testingVideos/test.mp4'
-cap = cv2.VideoCapture(video_path)
+MODEL_PATH = 'pose_landmarker_heavy.task'
+VIDEO_PATH = 'testingVideos/test.mp4'
 
-landmarks, world_landmarks, valid_frames, fps = get_video_data(video_path, model_path)
+cap = cv2.VideoCapture(VIDEO_PATH)
+landmarks, world_landmarks, valid_frames, fps = get_video_data(VIDEO_PATH, MODEL_PATH)
 
 
 """
@@ -22,7 +22,6 @@ TO TRACK PER SIDE:
 6. knee flexion during swing 
 """
 
-#TODO: add detection for which way the user is facing; angles should be computed relative to that. 
 
 def compute_cadence(left_contacts, right_contacts, fps, total_frames):
     """Return cadence in steps per minute"""
@@ -150,7 +149,7 @@ def validate_contacts(left_contacts, right_contacts):
         print("No violations. Reasonably alternating left and right contacts.")
         return True
 
-def detect_mid_swing(landmarks, fps, visibility_threshold, direction_confidence_threshold):
+def detect_mid_swing(world_landmarks, fps, visibility_threshold, direction_confidence_threshold):
     left_knee_drive_angle = []
     right_knee_drive_angle = []
     knee_ahead_count = 0
@@ -207,9 +206,30 @@ def detect_mid_swing(landmarks, fps, visibility_threshold, direction_confidence_
 
     return direction, left_knee_drive_angle, right_knee_drive_angle
 
+def compute_vertical_oscillation(landmarks, visibility_threshold):
+    """Compute vertical oscillation (amplitude) of midpoint of pelvis over time."""
+
+    com_y = (landmarks[:, 23, 1] + landmarks[:, 24, 1]) / 2.0 #y coordinate of center of mass
+    maxima = []
+    minima = []
+
+    for i in range(1, len(com_y) - 1):
+        if landmarks[i, 23, 3] >= visibility_threshold and landmarks[i, 24, 3] >= visibility_threshold and com_y[i-1] < com_y[i] and com_y[i] > com_y[i+1]:
+            maxima.append(com_y[i])
+        elif landmarks[i, 23, 3] >= visibility_threshold and landmarks[i, 24, 3] >= visibility_threshold and com_y[i-1] > com_y[i] and com_y[i] < com_y[i+1]:
+            minima.append(com_y[i])
+
+    return maxima, minima
 
 left_contacts = detect_initial_contacts(landmarks, fps, foot='left')
 right_contacts = detect_initial_contacts(landmarks, fps, foot = 'right')
 validate_contacts(left_contacts, right_contacts)
 
 direction, left_knee_swing, right_knee_swing = detect_mid_swing(landmarks, fps, VISIBILITY_THRESHOLD, DIRECTION_CONFIDENCE_THRESHOLD)
+metrics = compute_angles(right_contacts, left_contacts, VISIBILITY_THRESHOLD, landmarks, world_landmarks, direction)
+maxima, minima = compute_vertical_oscillation(landmarks, VISIBILITY_THRESHOLD)
+
+metrics["knee_swing"] = {'left': left_knee_swing, 'right': right_knee_swing}
+metrics["vertical_oscillation"] = {'maxima': maxima, 'minima': minima}
+
+cadence = compute_cadence(left_contacts, right_contacts, fps, len(landmarks))
