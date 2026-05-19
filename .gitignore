@@ -1,0 +1,5 @@
+.env
+__pycache__/
+*.task
+testingVideos/
+landmark_check.png

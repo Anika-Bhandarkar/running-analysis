@@ -6,7 +6,7 @@ DIRECTION_CONFIDENCE_THRESHOLD = 0.7
 VISIBILITY_THRESHOLD = 0.5
 
 MODEL_PATH = 'pose_landmarker_heavy.task'
-VIDEO_PATH = 'testingVideos/test.mp4'
+VIDEO_PATH = 'testingVideos/overstriding.mov'
 
 cap = cv2.VideoCapture(VIDEO_PATH)
 landmarks, world_landmarks, valid_frames, fps = get_video_data(VIDEO_PATH, MODEL_PATH)
@@ -229,7 +229,7 @@ direction, left_knee_swing, right_knee_swing = detect_mid_swing(landmarks, fps, 
 metrics = compute_angles(right_contacts, left_contacts, VISIBILITY_THRESHOLD, landmarks, world_landmarks, direction)
 maxima, minima = compute_vertical_oscillation(landmarks, VISIBILITY_THRESHOLD)
 
-metrics["knee_swing"] = {'left': left_knee_swing, 'right': right_knee_swing}
-metrics["vertical_oscillation"] = {'maxima': maxima, 'minima': minima}
+metrics["midswing_knee_flexion"] = {'left': left_knee_swing, 'right': right_knee_swing}
+vertical_oscillation = [maxima, minima]
 
 cadence = compute_cadence(left_contacts, right_contacts, fps, len(landmarks))

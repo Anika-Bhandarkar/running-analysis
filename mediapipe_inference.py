@@ -8,7 +8,7 @@ from scipy.signal import butter, filtfilt
 
 
 model_path = 'pose_landmarker_heavy.task'
-video_path = 'testingVideos/test.mp4'
+video_path = 'testingVideos/overstriding.mov'
 
 BaseOptions = mp.tasks.BaseOptions
 PoseLandmarker = mp.tasks.vision.PoseLandmarker
