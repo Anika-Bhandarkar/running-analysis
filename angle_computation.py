@@ -2,6 +2,9 @@ from mediapipe_inference import get_video_data
 import numpy as np
 import cv2
 
+DIRECTION_CONFIDENCE_THRESHOLD = 0.7
+VISIBILITY_THRESHOLD = 0.5
+
 model_path = 'pose_landmarker_heavy.task'
 video_path = 'testingVideos/test.mp4'
 cap = cv2.VideoCapture(video_path)
@@ -17,7 +20,6 @@ TO TRACK PER SIDE:
 4. vertical oscillation
 5. cadence
 6. knee flexion during swing 
-7. hip extension at toe-off 
 """
 
 #TODO: add detection for which way the user is facing; angles should be computed relative to that. 
@@ -28,7 +30,7 @@ def compute_cadence(left_contacts, right_contacts, fps, total_frames):
     total_time = total_frames / fps / 60 # seconds / frame * frames * 1 min / 60 s = min
     return total_contacts / total_time; 
     
-def compute_angles(right_contacts, left_contacts, visibility_threshold, landmarks, world_landmarks):
+def compute_angles(right_contacts, left_contacts, visibility_threshold, landmarks, world_landmarks, direction):
     angles = {
         'knee_flexion': {'left': [], 'right': []},
         'tibial_inclination': {'left': [], 'right': []},
@@ -47,9 +49,9 @@ def compute_angles(right_contacts, left_contacts, visibility_threshold, landmark
         if (world_hip[3] >= visibility_threshold and world_knee[3] >= visibility_threshold and world_ankle[3] >= visibility_threshold):
             angles['knee_flexion']['left'].append(compute_knee_flexion(world_hip, world_knee, world_ankle))
         if (knee[3] >= visibility_threshold and ankle[3] >= visibility_threshold):
-            angles['tibial_inclination']['left'].append(compute_tibial_flexion(knee, ankle))
+            angles['tibial_inclination']['left'].append(compute_tibial_flexion(knee, ankle, direction))
         if (hip[3] >= visibility_threshold and knee[3] >= visibility_threshold):
-            angles['thigh_angle']['left'].append(compute_thigh_angle(hip, knee))
+            angles['thigh_angle']['left'].append(compute_thigh_angle(hip, knee, direction))
 
     for i in range(len(right_contacts)):
         world_hip = world_landmarks[right_contacts[i], 24] 
@@ -63,37 +65,35 @@ def compute_angles(right_contacts, left_contacts, visibility_threshold, landmark
         if (world_hip[3] >= visibility_threshold and world_knee[3] >= visibility_threshold and world_ankle[3] >= visibility_threshold):
             angles['knee_flexion']['right'].append(compute_knee_flexion(world_hip, world_knee, world_ankle))
         if (knee[3] >= visibility_threshold and ankle[3] >= visibility_threshold):
-            angles['tibial_inclination']['right'].append(compute_tibial_flexion(knee, ankle))
+            angles['tibial_inclination']['right'].append(compute_tibial_flexion(knee, ankle, direction))
         if (hip[3] >= visibility_threshold and knee[3] >= visibility_threshold):
-            angles['thigh_angle']['right'].append(compute_thigh_angle(hip, knee))
+            angles['thigh_angle']['right'].append(compute_thigh_angle(hip, knee, direction))
 
     return angles
-
-
-    
 
 def compute_knee_flexion(world_hip, world_knee, world_ankle):
     "Computes angles between hip, knee and ankle at each initial contact."
     knee_ankle = world_knee[:3] - world_ankle[:3]
     knee_hip = world_knee[:3] - world_hip[:3]
     angle = np.dot(knee_ankle, knee_hip)/np.linalg.norm(knee_ankle)/np.linalg.norm(knee_hip)
-    angle = np.clip(angle, -1.0, 1.0);
+    angle = np.clip(angle, -1.0, 1.0)
     angle = np.degrees(np.arccos(angle))
     return angle
     
-def compute_tibial_flexion(knee, ankle):
-    """Return angle between shin and vertical at initial contact."""
-    dx = ankle[0] - knee[0]
+def compute_tibial_flexion(knee, ankle, direction):
+    """Return angle between shin and vertical at initial contact, taking direction of motion as positive x.
+    Positive angle indicates ankle in front of knee (overstriding)."""
+    dx = (ankle[0] - knee[0]) * direction
     dy = ankle[1] - knee[1]
     return np.degrees(np.arctan2(dx, dy))
 
-def compute_thigh_angle(hip, knee):
-    """Return angle formed by thigh and vertical at initial contact."""
-    dx = knee[0] - hip[0]
+def compute_thigh_angle(hip, knee, direction):
+    """Return angle formed by thigh and vertical at initial contact, taking direction of motion as positive x.
+    Positive angle indicates knee ahead of hip."""
+    dx = (knee[0] - hip[0]) * direction
     dy = knee[1] - hip[1]
     angle = np.degrees(np.arctan2(dx, dy))
     return angle
-
 
 def detect_initial_contacts(landmarks, fps, foot='left'):
     """
@@ -150,6 +150,66 @@ def validate_contacts(left_contacts, right_contacts):
         print("No violations. Reasonably alternating left and right contacts.")
         return True
 
+def detect_mid_swing(landmarks, fps, visibility_threshold, direction_confidence_threshold):
+    left_knee_drive_angle = []
+    right_knee_drive_angle = []
+    knee_ahead_count = 0
+    knee_behind_count = 0
+
+    left_knee_y = world_landmarks[:, 25, 1]
+    velocity = np.gradient(left_knee_y, 1.0 / fps)
+
+    # mid-swing occurs when velocity of knee goes from negative to positive
+    for i in range (1, len(velocity) - 1):
+        if velocity[i-1] < 0 and velocity[i] >= 0:
+            hip = world_landmarks[i, 23]
+            knee = world_landmarks[i, 25]
+            ankle = world_landmarks[i, 27]
+
+            if(hip[3] >= visibility_threshold and knee[3] >= visibility_threshold and ankle[3] >= visibility_threshold):
+                angle = compute_knee_flexion(hip, knee, ankle)
+                left_knee_drive_angle.append(angle)
+                if knee[0] > ankle[0]:
+                    knee_ahead_count += 1
+                else:
+                    knee_behind_count += 1
+
+    right_knee_y = world_landmarks[:, 26, 1]
+    velocity = np.gradient(right_knee_y, 1.0 / fps)
+
+    for i in range (1, len(velocity) - 1):
+        if velocity[i-1] < 0 and velocity[i] >= 0:
+            hip = world_landmarks[i, 24]
+            knee = world_landmarks[i, 26]
+            ankle = world_landmarks[i, 28]
+
+            if(hip[3] >= visibility_threshold and knee[3] >= visibility_threshold and ankle[3] >= visibility_threshold):
+                angle = compute_knee_flexion(hip, knee, ankle)
+                right_knee_drive_angle.append(angle)
+                if knee[0] > ankle[0]:
+                    knee_ahead_count += 1
+                else:
+                    knee_behind_count += 1
+    
+    total_counts = knee_ahead_count + knee_behind_count
+    if total_counts == 0:
+        raise ValueError("No mid-swing events detected.")
+    
+    ratio = knee_ahead_count / total_counts
+    
+    if ratio > direction_confidence_threshold:
+        direction = 1
+    elif ratio < (1 - direction_confidence_threshold):
+        direction = -1
+    else:
+        raise ValueError("Uncertain direction based on knee positions.")
+
+
+    return direction, left_knee_drive_angle, right_knee_drive_angle
+
+
 left_contacts = detect_initial_contacts(landmarks, fps, foot='left')
 right_contacts = detect_initial_contacts(landmarks, fps, foot = 'right')
 validate_contacts(left_contacts, right_contacts)
+
+direction, left_knee_swing, right_knee_swing = detect_mid_swing(landmarks, fps, VISIBILITY_THRESHOLD, DIRECTION_CONFIDENCE_THRESHOLD)
